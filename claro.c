@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <setjmp.h>
 
 #define MAX_CODE_LINES 1000
@@ -10,7 +11,7 @@
 #define MAX_FUNCTIONS 100
 
 typedef enum {
-    PRINT, VARIABLE, IF, ELSE, WHILE, END, INPUT, FUNC, CALL, LIST, DICT, STRING, COMMENT, TRY, EXCEPT, FINALLY, BREAK, CONTINUE, FILE, FOR, IMPORT
+    PRINT, VARIABLE, IF, ELSE, WHILE, END, INPUT, FUNC, CALL, LIST, DICT, STRING, COMMENT, TRY, EXCEPT, FINALLY, BREAK, CONTINUE, FILE_OP, FOR, IMPORT
 } StmtType;
 
 typedef struct {
@@ -51,12 +52,20 @@ char *trim_whitespace(char *str) {
     return str;
 }
 
+void strip_comments(char *line) {
+    char *comment_start = strchr(line, '#');
+    if (comment_start) {
+        *comment_start = '\0';
+    }
+}
+
 int parse_code(const char *code, char parsed_code[MAX_CODE_LINES][MAX_LINE_LENGTH]) {
     int line_count = 0;
     char *line = strtok(strdup(code), "\n");
     while (line != NULL) {
         line = trim_whitespace(line);
-        if (strlen(line) > 0 && line[0] != '#') {
+        strip_comments(line);
+        if (strlen(line) > 0) {
             strncpy(parsed_code[line_count++], line, MAX_LINE_LENGTH);
         }
         line = strtok(NULL, "\n");
@@ -64,19 +73,90 @@ int parse_code(const char *code, char parsed_code[MAX_CODE_LINES][MAX_LINE_LENGT
     return line_count;
 }
 
-void execute_line(const char *line, int line_number);
+char* get_variable(const char *name) {
+    for (int i = 0; i < variable_count; i++) {
+        if (strcmp(variables[i].name, name) == 0) {
+            return variables[i].value;
+        }
+    }
+    return NULL;
+}
 
-void execute_code(const char code[MAX_CODE_LINES][MAX_LINE_LENGTH], int line_count) {
+void set_variable(const char *name, const char *value) {
+    for (int i = 0; i < variable_count; i++) {
+        if (strcmp(variables[i].name, name) == 0) {
+            strncpy(variables[i].value, value, MAX_LINE_LENGTH);
+            return;
+        }
+    }
+    strncpy(variables[variable_count].name, name, MAX_LINE_LENGTH);
+    strncpy(variables[variable_count].value, value, MAX_LINE_LENGTH);
+    variable_count++;
+}
+
+void execute_line(char *line, int line_number) {
+    line = trim_whitespace(line);
+    if (strlen(line) == 0 || line[0] == '#') {
+        // Skip empty lines or comments
+        return;
+    }
+    char *command = strtok(line, " ");
+    if (strcmp(command, "COMMENT") == 0) {
+        // Skip comments
+        return;
+    } else if (strcmp(command, "PRINT") == 0) {
+        char *arg = strtok(NULL, "\n");
+        if (arg[0] == '"') {
+            // Handle string literal
+            if (arg[strlen(arg) - 1] == '"') {
+                arg[strlen(arg) - 1] = '\0';  // Remove ending quote if present
+            }
+            printf("%s\n", arg + 1);  // Print without starting quote
+        } else {
+            // Handle variable
+            char *value = get_variable(arg);
+            if (value != NULL) {
+                printf("%s\n", value);
+            } else {
+                error("Undefined variable", line_number);
+            }
+        }
+    } else if (strcmp(command, "VARIABLE") == 0) {
+        char *name = strtok(NULL, " =");
+        strtok(NULL, " ");  // Skip the equal sign
+        char *value = strtok(NULL, "\n");
+        if (value) {
+            strip_comments(value);  // Strip comments before processing the value
+            value = trim_whitespace(value);  // Trim whitespace again after stripping comments
+            if (value[0] == '"') {
+                value++;
+                if (value[strlen(value) - 1] == '"') {
+                    value[strlen(value) - 1] = '\0';  // Remove ending quote if present
+                }
+            }
+            set_variable(name, value);
+        } else {
+            error("Invalid variable assignment", line_number);
+        }
+    } else {
+        // Handle other commands or error
+        error("Unknown command", line_number);
+    }
+}
+
+void execute_code(char code[MAX_CODE_LINES][MAX_LINE_LENGTH], int line_count) {
     for (int i = 0; i < line_count; i++) {
         execute_line(code[i], i + 1);
     }
 }
 
-void execute_file(const char *file_path) {
-    FILE *file = fopen(file_path, "r");
-    if (file == NULL) {
-        error("Could not open file", 0);
+void execute_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        fprintf(stderr, "Error: Could not open file %s\n", filename);
+        return;
     }
+
     char code[MAX_CODE_LINES][MAX_LINE_LENGTH];
     int line_count = 0;
     char line[MAX_LINE_LENGTH];
@@ -94,6 +174,7 @@ void interactive_mode() {
         printf("> ");
         if (fgets(line, sizeof(line), stdin) == NULL) break;
         trim_whitespace(line);
+        strip_comments(line);
         if (strcmp(line, "exit") == 0) break;
         execute_line(line, 0);
     }
@@ -110,11 +191,6 @@ void print_help() {
 
 void print_version() {
     printf("Claro Interpreter Version 1.0\n");
-}
-
-void execute_line(const char *line, int line_number) {
-    // Add code to parse and execute a line here
-    // This is highly dependent on your language's syntax and semantics
 }
 
 int main(int argc, char *argv[]) {
